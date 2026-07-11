@@ -11,11 +11,16 @@ Both providers return the same shape (list[dict] matching schemas.TestCase)
 so routers never need to know which one is active.
 """
 import json
+import logging
 import re
+import time
 
 import httpx
 
 from app.config import settings
+from app.exceptions import LLMResponseError, LLMUnavailableError
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a senior QA engineer at a medical device company, writing test "
@@ -45,6 +50,12 @@ Example of the expected shape (content unrelated, for format only):
 [{{"title": "Battery low warning triggers E1", "steps": "1. Insert batteries below 20% charge. 2. Power on device.", "expected_result": "Display shows E1 within 3 seconds of power-on.", "priority": "high"}}]
 """
 
+# Statuses worth retrying: rate-limited or a transient server-side hiccup.
+# 4xx client errors other than 429 (bad request, auth failure) won't
+# succeed on retry, so we fail fast on those instead of wasting 3 calls
+# against a key that's simply wrong.
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
 
 def _extract_json_array(raw_text: str) -> list[dict]:
     """
@@ -57,8 +68,15 @@ def _extract_json_array(raw_text: str) -> list[dict]:
 
     match = re.search(r"\[.*\]", cleaned, re.DOTALL)
     if not match:
-        raise ValueError(f"No JSON array found in LLM response: {raw_text[:200]}")
-    return json.loads(match.group(0))
+        raise LLMResponseError(
+            "The AI provider's response didn't contain the expected JSON array."
+        )
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise LLMResponseError(
+            "The AI provider's response contained malformed JSON."
+        ) from exc
 
 
 def _mock_generate(content: str) -> list[dict]:
@@ -143,14 +161,11 @@ def _mock_generate(content: str) -> list[dict]:
     return cases[:5]
 
 
-def _groq_generate(content: str) -> list[dict]:
-    if not settings.groq_api_key:
-        raise RuntimeError(
-            "LLM_PROVIDER is set to 'groq' but GROQ_API_KEY is empty. "
-            "Add a key to .env or set LLM_PROVIDER=mock."
-        )
-
-    response = httpx.post(
+def _call_groq_once(content: str) -> httpx.Response:
+    # Auth header is built fresh per attempt and never logged or included
+    # in any exception we raise -- httpx's own exceptions can otherwise
+    # echo the request, which would leak the key into logs/error responses.
+    return httpx.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {settings.groq_api_key}"},
         json={
@@ -161,16 +176,73 @@ def _groq_generate(content: str) -> list[dict]:
             ],
             "temperature": 0.3,
         },
-        timeout=30.0,
+        timeout=settings.llm_timeout_seconds,
     )
-    response.raise_for_status()
-    raw_text = response.json()["choices"][0]["message"]["content"]
-    return _extract_json_array(raw_text)
+
+
+def _groq_generate(content: str) -> list[dict]:
+    if not settings.groq_api_key:
+        # A config-time invariant (see Settings._require_key_for_groq)
+        # should make this unreachable, but a defensive check here means
+        # a key that's cleared at runtime fails clearly instead of
+        # sending a request that Groq will reject anyway.
+        raise LLMUnavailableError(
+            "LLM_PROVIDER is set to 'groq' but GROQ_API_KEY is empty."
+        )
+
+    last_error: Exception | None = None
+    max_attempts = settings.llm_max_retries + 1
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = _call_groq_once(content)
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            logger.warning("Groq request timed out (attempt %d/%d)", attempt, max_attempts)
+        except httpx.RequestError as exc:
+            # DNS failure, connection refused, etc. -- never retriable in
+            # a way more attempts within the same request would fix if
+            # it's a persistent network issue, but transient blips do
+            # happen, so we still retry within the configured budget.
+            last_error = exc
+            logger.warning("Groq request failed (attempt %d/%d): %s", attempt, max_attempts, type(exc).__name__)
+        else:
+            if response.status_code == 200:
+                raw_text = response.json()["choices"][0]["message"]["content"]
+                return _extract_json_array(raw_text)
+
+            if response.status_code not in _RETRYABLE_STATUS_CODES:
+                # Bad request / bad auth / model not found -- retrying
+                # won't help, so surface immediately with a sanitized
+                # message rather than the raw response body (which Groq
+                # sometimes echoes the request into).
+                raise LLMResponseError(
+                    f"AI provider returned HTTP {response.status_code}, which is not retriable."
+                )
+            last_error = LLMResponseError(f"AI provider returned HTTP {response.status_code}.")
+            logger.warning(
+                "Groq returned retriable status %d (attempt %d/%d)",
+                response.status_code, attempt, max_attempts,
+            )
+
+        if attempt < max_attempts:
+            time.sleep(min(2 ** (attempt - 1) * 0.5, 4.0))  # 0.5s, 1s, 2s, ... capped
+
+    if isinstance(last_error, LLMResponseError):
+        raise last_error
+    raise LLMUnavailableError(
+        "Could not reach the AI provider after multiple attempts. Please try again shortly."
+    ) from last_error
 
 
 def generate_test_cases(content: str) -> tuple[list[dict], str, str]:
     """
     Returns (test_cases, model_name, provider_name).
+
+    Raises LLMUnavailableError (network/timeout) or LLMResponseError
+    (reachable but unusable response) on failure -- routers translate
+    these into HTTP 502s via the handlers registered in main.py, rather
+    than letting them surface as an opaque 500.
     """
     if settings.llm_provider == "groq":
         return _groq_generate(content), settings.groq_model, "groq"

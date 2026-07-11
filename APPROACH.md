@@ -151,14 +151,3 @@ than one merged paragraph, which keeps multi-section generations coherent.
   versioned-document design (keep old trees around, tag selections with a
   document version) would be needed for a system that re-ingests updated
   manuals over time.
-
-## 5. LLM integration: verified against both providers
-
-Both providers were tested end-to-end before submission, not just the mock:
-- **Mock provider** (default): verified via the automated pytest suite and manual curl walkthrough.
-- **Groq provider**: verified manually with a live API call against `llama-3.3-70b-versatile`.
-  For the "5.3 E3" (overpressure) section, it produced three distinct,
-  well-reasoned test cases — basic overpressure detection, repeated-trigger
-  consistency, and behavior across increasing pressure increments — confirming
-  the prompt design (see Section 3) produces coherent, non-redundant output
-  from a real model, not just the keyword-based mock.

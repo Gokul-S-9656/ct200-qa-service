@@ -11,6 +11,7 @@ markdown text into DB rows.
 from sqlalchemy.orm import Session
 
 from app import crud
+from app.exceptions import ValidationError
 from app.parser import parse_markdown
 
 
@@ -18,7 +19,7 @@ def ingest_markdown(db: Session, text: str) -> int:
     """Wipes the existing tree and inserts a fresh one. Returns node count."""
     parsed_nodes = parse_markdown(text)
     if not parsed_nodes:
-        raise ValueError("No headings found -- document must use #, ##, or ### headings")
+        raise ValidationError("No headings found -- document must use #, ##, or ### headings")
     crud.clear_all_nodes(db)
     order_map = crud.bulk_insert_nodes(db, parsed_nodes)
     return len(order_map)

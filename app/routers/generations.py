@@ -3,11 +3,12 @@ Generation API: reconstruct text for a selection, call the LLM, persist
 the result in TinyDB. Retrieval API: fetch past generations by selection
 or by node.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app import crud, llm, nosql, schemas
 from app.database import get_db
+from app.exceptions import NotFoundError, ValidationError
 
 router = APIRouter(tags=["Generation"])
 
@@ -16,12 +17,16 @@ router = APIRouter(tags=["Generation"])
 def generate_test_cases(selection_id: int, db: Session = Depends(get_db)):
     selection = crud.get_selection(db, selection_id)
     if selection is None:
-        raise HTTPException(status_code=404, detail=f"Selection {selection_id} not found")
+        raise NotFoundError(f"Selection {selection_id} not found")
 
     content = crud.collect_selection_text(selection)
     if not content.strip():
-        raise HTTPException(status_code=400, detail="Selected nodes have no text content to generate from")
+        raise ValidationError("Selected nodes have no text content to generate from")
 
+    # llm.generate_test_cases raises LLMUnavailableError / LLMResponseError
+    # on failure; both are AppErrors, so the handler in main.py maps them
+    # to a 502 with a client-safe message without this route needing a
+    # try/except of its own.
     test_cases, model_name, provider = llm.generate_test_cases(content)
     node_ids = [n.id for n in selection.nodes]
 
@@ -39,7 +44,7 @@ def generate_test_cases(selection_id: int, db: Session = Depends(get_db)):
 def get_generation(generation_id: str):
     record = nosql.get_generation_by_id(generation_id)
     if record is None:
-        raise HTTPException(status_code=404, detail=f"Generation {generation_id} not found")
+        raise NotFoundError(f"Generation {generation_id} not found")
     return record
 
 

@@ -17,16 +17,12 @@ SelectionNode
     the option to add per-row metadata later (e.g. the order the user
     picked nodes in) without a migration that changes table shape.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 
 from app.database import Base
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 class DocumentNode(Base):
@@ -47,7 +43,7 @@ class DocumentNode(Base):
         cascade="all, delete-orphan",
     )
 
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Selection(Base):
@@ -55,7 +51,7 @@ class Selection(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(300), nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     nodes = relationship("DocumentNode", secondary="selection_nodes")
 

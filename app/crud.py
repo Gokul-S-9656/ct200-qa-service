@@ -3,10 +3,11 @@ Database access functions. Kept as plain functions (not a repository class)
 since the project is small enough that a class layer would just add
 indirection without adding value.
 """
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_
 
 from app import models
+from app.exceptions import ValidationError
 
 
 # ---------- Ingestion ----------
@@ -75,7 +76,16 @@ def get_top_level_nodes(db: Session) -> list[models.DocumentNode]:
 
 
 def get_node(db: Session, node_id: int) -> models.DocumentNode | None:
-    return db.query(models.DocumentNode).filter(models.DocumentNode.id == node_id).first()
+    # selectinload pulls children in one extra query instead of one
+    # lazy-loaded query per child accessed during response serialization --
+    # cheap here (a handful of children), but the right default so this
+    # doesn't quietly become an N+1 if a node ever has dozens of children.
+    return (
+        db.query(models.DocumentNode)
+        .options(selectinload(models.DocumentNode.children))
+        .filter(models.DocumentNode.id == node_id)
+        .first()
+    )
 
 
 def search_nodes(db: Session, query: str) -> list[models.DocumentNode]:
@@ -95,7 +105,7 @@ def create_selection(db: Session, node_ids: list[int], name: str | None) -> mode
     found_ids = {n.id for n in nodes}
     missing = set(node_ids) - found_ids
     if missing:
-        raise ValueError(f"Unknown node id(s): {sorted(missing)}")
+        raise ValidationError(f"Unknown node id(s): {sorted(missing)}")
 
     selection = models.Selection(name=name, nodes=nodes)
     db.add(selection)

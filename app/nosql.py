@@ -15,6 +15,7 @@ matches "seed script on startup" simplicity and makes the grader's setup
 a `pip install` and nothing else. The tradeoff (no concurrent-write
 safety, no real querying) is explicitly called out in the approach doc.
 """
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -24,6 +25,15 @@ from app.config import settings
 
 _db = TinyDB(settings.tinydb_path)
 _generations = _db.table("generations")
+
+# TinyDB does a full read-modify-write of the JSON file on every write and
+# has no internal concurrency control (documented tradeoff in APPROACH.md).
+# FastAPI runs sync `def` route handlers in a threadpool, so two /generate
+# requests genuinely can race here without an explicit lock -- worst case,
+# one write clobbers the other. A process-local lock is a cheap, correct
+# fix for the single-process deployment this project targets; it would
+# need to become a real DB (or a file lock library) for multi-process.
+_write_lock = threading.Lock()
 
 
 def save_generation(
@@ -42,7 +52,8 @@ def save_generation(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "test_cases": test_cases,
     }
-    _generations.insert(record)
+    with _write_lock:
+        _generations.insert(record)
     return record
 
 

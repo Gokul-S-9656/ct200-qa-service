@@ -2,42 +2,11 @@
 End-to-end API tests using FastAPI's TestClient (which triggers the app's
 lifespan, so startup seeding runs exactly like it would in production).
 
+The `client` fixture is defined in tests/conftest.py and shared across
+every test file -- see that file for why.
+
 Run with: pytest -v
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-os.environ["DATABASE_URL"] = "sqlite:///./test_ct200.db"
-os.environ["TINYDB_PATH"] = "./test_tinydb_generations.json"
-os.environ["LLM_PROVIDER"] = "mock"
-
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture(scope="module")
-def client():
-    for f in ("test_ct200.db", "test_tinydb_generations.json"):
-        if os.path.exists(f):
-            os.remove(f)
-    from app.main import app
-    from app.database import engine
-    from app import nosql
-
-    with TestClient(app) as c:
-        yield c
-
-    # Release SQLite/TinyDB file handles before deleting them -- required
-    # on Windows, where the OS keeps a lock on open files (Linux/Mac allow
-    # deleting a file that's still open, so this was invisible there).
-    engine.dispose()
-    nosql._db.close()
-
-    for f in ("test_ct200.db", "test_tinydb_generations.json"):
-        if os.path.exists(f):
-            os.remove(f)
 
 
 def test_health_check(client):
