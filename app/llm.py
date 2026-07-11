@@ -106,17 +106,39 @@ def _mock_generate(content: str) -> list[dict]:
             "priority": "medium",
         })
 
-    # Always include at least one generic-but-concrete fallback so the
-    # response never comes back empty for sections without keywords.
-    cases.append({
-        "title": "Section content matches displayed/behavioral spec",
-        "steps": "1. Review the selected manual section. 2. Exercise the described feature "
-                 "on a physical or simulated device. 3. Compare actual behavior to the "
-                 "documented behavior.",
-        "expected_result": "Device behavior matches the manual section exactly; any "
-                            "deviation is logged as a defect.",
-        "priority": "low",
-    })
+    # Generic-but-concrete fallbacks, appended until we have at least 3
+    # cases (the assignment requires 3-5 regardless of section length).
+    fallbacks = [
+        {
+            "title": "Section content matches displayed/behavioral spec",
+            "steps": "1. Review the selected manual section. 2. Exercise the described "
+                     "feature on a physical or simulated device. 3. Compare actual "
+                     "behavior to the documented behavior.",
+            "expected_result": "Device behavior matches the manual section exactly; any "
+                                "deviation is logged as a defect.",
+            "priority": "low",
+        },
+        {
+            "title": "Behavior is consistent across repeated attempts",
+            "steps": "1. Repeat the scenario described in this section 5 times in a row. "
+                     "2. Record the outcome of each attempt.",
+            "expected_result": "The device behaves identically and correctly on every "
+                                "repetition, with no intermittent failures.",
+            "priority": "medium",
+        },
+        {
+            "title": "Manual wording matches on-device/UI behavior exactly",
+            "steps": "1. Compare the exact wording and thresholds in this manual section "
+                     "against the actual device firmware/UI. 2. Note any mismatch.",
+            "expected_result": "No discrepancy exists between documented and actual "
+                                "device behavior for this section.",
+            "priority": "low",
+        },
+    ]
+    for fb in fallbacks:
+        if len(cases) >= 3:
+            break
+        cases.append(fb)
 
     return cases[:5]
 
