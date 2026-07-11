@@ -70,3 +70,13 @@ def get_generations_by_node(node_id: int) -> list[dict]:
 def get_generation_by_id(generation_id: str) -> dict | None:
     Generation = Query()
     return _generations.get(Generation.id == generation_id)
+
+
+def close() -> None:
+    """
+    Release TinyDB's file handle. Same reasoning as
+    `database.dispose_engine`: TinyDB keeps the JSON file open for the
+    life of the process, which is invisible on POSIX but blocks
+    delete/rename on Windows until this runs.
+    """
+    _db.close()

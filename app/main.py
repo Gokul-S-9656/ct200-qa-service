@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import Base, engine, SessionLocal
+from app.database import Base, SessionLocal, dispose_engine, engine
 from app.exceptions import AppError
 from app.ingest import ingest_markdown
 from app.logging_config import configure_logging
@@ -51,6 +51,12 @@ def seed_database_on_startup():
 async def lifespan(app: FastAPI):
     seed_database_on_startup()
     yield
+    # Release file handles on shutdown so a process restart (or, on
+    # Windows, a redeploy script trying to replace the db files) doesn't
+    # hit a stale lock from this process.
+    from app import nosql
+    dispose_engine()
+    nosql.close()
 
 
 app = FastAPI(

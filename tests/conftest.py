@@ -26,14 +26,33 @@ from fastapi.testclient import TestClient
 _TEST_FILES = ("test_ct200.db", "test_tinydb_generations.json")
 
 
+def _remove_test_files() -> None:
+    for f in _TEST_FILES:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except PermissionError:
+                # Belt-and-suspenders: dispose_engine()/nosql.close() in
+                # the fixture below should already have released these
+                # on every platform. If a handle is still somehow open
+                # (e.g. an OS-level antivirus scan holding the file, or a
+                # future contributor adding a code path that opens the
+                # db without going through get_db()), this shouldn't
+                # fail the whole test run over cleanup -- the next run
+                # wipes it anyway.
+                pass
+
+
 @pytest.fixture(scope="session")
 def client():
-    for f in _TEST_FILES:
-        if os.path.exists(f):
-            os.remove(f)
+    _remove_test_files()
+    from app.database import dispose_engine
     from app.main import app
+    from app import nosql
+
     with TestClient(app) as c:
         yield c
-    for f in _TEST_FILES:
-        if os.path.exists(f):
-            os.remove(f)
+
+    dispose_engine()
+    nosql.close()
+    _remove_test_files()
