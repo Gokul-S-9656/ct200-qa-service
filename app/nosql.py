@@ -16,7 +16,7 @@ a `pip install` and nothing else. The tradeoff (no concurrent-write
 safety, no real querying) is explicitly called out in the approach doc.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from tinydb import TinyDB, Query
 
@@ -39,7 +39,7 @@ def save_generation(
         "node_ids": node_ids,
         "model": model,
         "provider": provider,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "test_cases": test_cases,
     }
     _generations.insert(record)

@@ -23,8 +23,18 @@ def client():
         if os.path.exists(f):
             os.remove(f)
     from app.main import app
+    from app.database import engine
+    from app import nosql
+
     with TestClient(app) as c:
         yield c
+
+    # Release SQLite/TinyDB file handles before deleting them -- required
+    # on Windows, where the OS keeps a lock on open files (Linux/Mac allow
+    # deleting a file that's still open, so this was invisible there).
+    engine.dispose()
+    nosql._db.close()
+
     for f in ("test_ct200.db", "test_tinydb_generations.json"):
         if os.path.exists(f):
             os.remove(f)
